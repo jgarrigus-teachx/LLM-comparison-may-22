@@ -1,0 +1,169 @@
+import curses
+import math
+import time
+import random
+
+# Customizable parameters
+N = 20  # Height (rows); will auto-adjust to terminal
+M = 40  # Width (columns); will auto-adjust
+Q = 5   # Number of fish
+FISH_SPEED = 1.5  # Units per frame
+BUBBLE_SPEED = 1.0  # Units per frame
+BUBBLE_FREQ = 0.3  # Probability of new bubble
+
+# ANSI Colors (used via curses)
+COLOR_FISH = 1  # Yellow
+COLOR_BUBBLE = 2  # Light cyan
+COLOR_BORDER = 3  # White
+
+class Fish:
+    def __init__(self, x, y, max_x, max_y):
+        self.x = x
+        self.y = y
+        self.angle = random.uniform(0, 2 * math.pi)
+        self.speed = FISH_SPEED
+        self.size = random.randint(1, 3)
+        self.max_x = max_x
+        self.max_y = max_y
+
+    def move(self):
+        self.x += self.speed * math.cos(self.angle)
+        self.y += self.speed * math.sin(self.angle)
+
+    def reflect(self, is_wall=False):
+        if is_wall:
+            self.angle = math.pi - self.angle + random.uniform(-0.3, 0.3)  # More randomization to avoid sticking
+        else:
+            self.angle = -self.angle + random.uniform(-0.3, 0.3)
+        self.angle %= (2 * math.pi)
+
+    def handle_walls(self):
+        half_size = self.size / 2
+        if self.x - half_size < 0:
+            self.x = half_size + 0.5  # Small bounce
+            self.reflect(is_wall=True)
+        elif self.x + half_size >= self.max_x:
+            self.x = self.max_x - half_size - 0.5
+            self.reflect(is_wall=True)
+        if self.y - half_size < 0:
+            self.y = half_size + 0.5
+            self.reflect(is_wall=True)
+        elif self.y + half_size >= self.max_y:
+            self.y = self.max_y - half_size - 0.5
+            self.reflect(is_wall=True)
+
+    def get_sprite(self):
+        # 2D multi-row sprites (list of strings)
+        if self.size == 1:
+            if -math.pi/4 < self.angle <= math.pi/4: return ['>']  # Right
+            elif math.pi/4 < self.angle <= 3*math.pi/4: return ['^']
+            elif 3*math.pi/4 < self.angle <= 5*math.pi/4: return ['<']
+            else: return ['v']
+        elif self.size == 2:
+            if -math.pi/4 < self.angle <= math.pi/4: return [' >', ' >']  # Right
+            elif math.pi/4 < self.angle <= 3*math.pi/4: return [' ^ ', '^^^']  # Up (inverted for direction)
+            elif 3*math.pi/4 < self.angle <= 5*math.pi/4: return ['< ', '< ']  # Left
+            else: return ['v', 'v']
+        else:  # size 3
+            if -math.pi/4 < self.angle <= math.pi/4: return ['  >', ' >>', '  >']  # Right
+            elif math.pi/4 < self.angle <= 3*math.pi/4: return ['  ^  ', ' ^^^ ', '^^^^^']  # Up
+            elif 3*math.pi/4 < self.angle <= 5*math.pi/4: return ['<  ', '<< ', '<  ']  # Left
+            else: return [' v ', 'vvv', ' v ']
+
+class Bubble:
+    def __init__(self, x, max_y):
+        self.x = x
+        self.y = max_y - 1
+        self.size = random.randint(1, 3)  # Width and height
+        self.speed = BUBBLE_SPEED
+
+    def move(self):
+        self.y -= self.speed
+
+    def is_offscreen(self):
+        return self.y + self.size < 0
+
+    def get_sprite(self):
+        # 2D circular sprites
+        if self.size == 1: return ['o']
+        elif self.size == 2: return ['oo', 'oo']
+        else: return [' o ', 'ooo', ' o ']
+
+def main(stdscr):
+    global N, M
+    curses.curs_set(0)  # Hide cursor
+    stdscr.nodelay(True)  # Non-blocking input
+    N, M = stdscr.getmaxyx()  # Auto-size to terminal (height, width)
+    N -= 2  # Account for borders
+    M -= 2
+    N = max(10, N)  # Minimum size
+    M = max(20, M)
+
+    # Setup colors
+    curses.start_color()
+    curses.init_pair(COLOR_FISH, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+    curses.init_pair(COLOR_BUBBLE, curses.COLOR_CYAN, curses.COLOR_BLACK)
+    curses.init_pair(COLOR_BORDER, curses.COLOR_WHITE, curses.COLOR_BLACK)
+
+    fish_list = [Fish(random.uniform(2, M-3), random.uniform(2, N-3), M, N) for _ in range(Q)]
+    bubbles = []
+
+    while True:
+        stdscr.clear()
+
+        # Draw borders
+        stdscr.border()
+
+        # Update and draw bubbles
+        for bubble in bubbles[:]:
+            bubble.move()
+            if bubble.is_offscreen():
+                bubbles.remove(bubble)
+            else:
+                sprite = bubble.get_sprite()
+                by = int(bubble.y)
+                bx = int(bubble.x - bubble.size / 2)
+                for i, row in enumerate(sprite):
+                    for j, char in enumerate(row):
+                        gy = by - i + 1  # Adjust for rising
+                        gx = bx + j + 1  # Account for border
+                        if 0 < gy < N+1 and 0 < gx < M+1 and char != ' ':
+                            stdscr.addch(gy, gx, 'o', curses.color_pair(COLOR_BUBBLE))
+
+        # Update and draw fish
+        for fish in fish_list:
+            fish.move()
+            fish.handle_walls()
+            sprite = fish.get_sprite()
+            fy = int(fish.y)
+            fx = int(fish.x - len(sprite[0]) / 2)
+            for i, row in enumerate(sprite):
+                for j, char in enumerate(row):
+                    if char != ' ':
+                        gy = fy + i + 1
+                        gx = fx + j + 1
+                        if 0 < gy < N+1 and 0 < gx < M+1:
+                            stdscr.addch(gy, gx, char, curses.color_pair(COLOR_FISH))
+
+        # Fish collisions
+        for i in range(len(fish_list)):
+            for j in range(i+1, len(fish_list)):
+                f1, f2 = fish_list[i], fish_list[j]
+                dist = math.hypot(f1.x - f2.x, f1.y - f2.y)
+                if dist < (f1.size + f2.size) / 2 + 1:
+                    f1.reflect()
+                    f2.reflect()
+
+        # Add new bubbles
+        if random.random() < BUBBLE_FREQ:
+            bubbles.append(Bubble(random.uniform(2, M-3), N))
+
+        stdscr.refresh()
+        time.sleep(0.1)
+
+        # Quit on 'q'
+        if stdscr.getch() == ord('q'):
+            break
+
+if __name__ == "__main__":
+    curses.wrapper(main)
