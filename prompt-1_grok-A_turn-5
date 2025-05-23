@@ -1,0 +1,201 @@
+import curses
+import math
+import time
+import random
+
+# Customizable parameters
+N = 20  # Height (rows); auto-adjusts to terminal
+M = 40  # Width (columns); auto-adjusts
+Q = 5   # Number of fish
+FISH_SPEED = 1.5  # Units per frame
+BUBBLE_SPEED = 1.0  # Units per frame
+BUBBLE_FREQ = 0.3  # Probability of new bubble per frame
+MAX_BOUNCES_PER_SEC = 2  # Heuristic to prevent jitter
+
+# Colors
+COLOR_FISH = 1    # Yellow
+COLOR_BUBBLE = 2  # Light cyan
+COLOR_BORDER = 3  # White
+COLOR_CORAL = 4   # Subtle green for coral
+
+class Fish:
+    def __init__(self, x, y, max_x, max_y):
+        self.x = x
+        self.y = y
+        self.angle = random.uniform(0, 2 * math.pi)
+        self.speed = FISH_SPEED
+        self.size = random.randint(1, 3)
+        self.max_x = max_x
+        self.max_y = max_y
+        self.bounce_times = []  # Timestamps of recent bounces
+
+    def move(self):
+        self.x += self.speed * math.cos(self.angle)
+        self.y += self.speed * math.sin(self.angle)
+
+    def reflect(self, is_wall=False):
+        current_time = time.time()
+        self.bounce_times = [t for t in self.bounce_times if current_time - t < 1]
+        if len(self.bounce_times) >= MAX_BOUNCES_PER_SEC:
+            # Redirect toward center to avoid jitter
+            center_x, center_y = self.max_x / 2, self.max_y / 2
+            dx, dy = center_x - self.x, center_y - self.y
+            self.angle = math.atan2(dy, dx) + random.uniform(-0.5, 0.5)
+        else:
+            if is_wall:
+                self.angle = math.pi - self.angle + random.uniform(-0.3, 0.3)
+            else:
+                self.angle = -self.angle + random.uniform(-0.3, 0.3)
+            self.bounce_times.append(current_time)
+        self.angle %= (2 * math.pi)
+
+    def handle_walls(self):
+        half_size = self.size / 2 + 0.5
+        if self.x - half_size < 0:
+            self.x = half_size + 0.5
+            self.reflect(is_wall=True)
+        elif self.x + half_size >= self.max_x:
+            self.x = self.max_x - half_size - 0.5
+            self.reflect(is_wall=True)
+        if self.y - half_size < 0:
+            self.y = half_size + 0.5
+            self.reflect(is_wall=True)
+        elif self.y + half_size >= self.max_y:
+            self.y = self.max_y - half_size - 0.5
+            self.reflect(is_wall=True)
+
+    def get_sprite(self):
+        # 2D multi-row sprites based on size and direction
+        if self.size == 1:
+            if -math.pi/4 < self.angle <= math.pi/4: return ['>']  # Right
+            elif math.pi/4 < self.angle <= 3*math.pi/4: return ['^']  # Up
+            elif 3*math.pi/4 < self.angle <= 5*math.pi/4: return ['<']  # Left
+            else: return ['v']  # Down
+        elif self.size == 2:
+            if -math.pi/4 < self.angle <= math.pi/4: return [' >', ' >']  # Right
+            elif math.pi/4 < self.angle <= 3*math.pi/4: return [' ^ ', '^^^']  # Up
+            elif 3*math.pi/4 < self.angle <= 5*math.pi/4: return ['< ', '< ']  # Left
+            else: return [' v ', 'vvv']  # Down
+        else:  # size 3
+            if -math.pi/4 < self.angle <= math.pi/4: return ['  >', ' >>', '  >']  # Right
+            elif math.pi/4 < self.angle <= 3*math.pi/4: return ['  ^  ', ' ^^^ ', '^^^^^']  # Up
+            elif 3*math.pi/4 < self.angle <= 5*math.pi/4: return ['<  ', '<< ', '<  ']  # Left
+            else: return ['  v  ', ' vvv ', 'vvvvv']  # Down
+
+class Bubble:
+    def __init__(self, x, max_y):
+        self.x = x
+        self.y = max_y - 1
+        self.size = random.randint(1, 3)
+        self.speed = BUBBLE_SPEED
+
+    def move(self):
+        self.y -= self.speed
+
+    def is_offscreen(self):
+        return self.y + self.size < 0
+
+    def get_sprite(self):
+        # 2D circular sprites
+        if self.size == 1: return ['o']
+        elif self.size == 2: return ['oo', 'oo']
+        else: return [' o ', 'ooo', ' o ']
+
+def generate_coral(max_x, max_y):
+    coral = []
+    num_coral = random.randint(3, 5)  # Subtle amount
+    for _ in range(num_coral):
+        x = random.randint(1, max_x - 4)
+        height = random.randint(2, 4)
+        coral.append({'x': x, 'height': height})
+    return coral
+
+def draw_coral(stdscr, coral, max_y):
+    for c in coral:
+        for i in range(c['height']):
+            gy = max_y - i
+            stdscr.addch(gy, c['x'] + 1, '|', curses.color_pair(COLOR_CORAL))  # Stem
+            if i == 0:  # Top fronds
+                stdscr.addch(gy, c['x'], '/', curses.color_pair(COLOR_CORAL))
+                stdscr.addch(gy, c['x'] + 2, '\\', curses.color_pair(COLOR_CORAL))
+
+def main(stdscr):
+    global N, M
+    curses.curs_set(0)
+    stdscr.nodelay(True)
+    N, M = stdscr.getmaxyx()
+    N -= 2
+    M -= 2
+    N = max(10, N)
+    M = max(20, M)
+
+    curses.start_color()
+    curses.init_pair(COLOR_FISH, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+    curses.init_pair(COLOR_BUBBLE, curses.COLOR_CYAN, curses.COLOR_BLACK)
+    curses.init_pair(COLOR_BORDER, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(COLOR_CORAL, curses.COLOR_GREEN, curses.COLOR_BLACK)
+
+    fish_list = [Fish(random.uniform(2, M-3), random.uniform(2, N-5), M, N) for _ in range(Q)]
+    bubbles = []
+    coral = generate_coral(M, N)
+
+    while True:
+        stdscr.clear()
+        stdscr.border()
+
+        # Draw coral (static, at bottom)
+        draw_coral(stdscr, coral, N + 1)
+
+        # Update and draw bubbles
+        for bubble in bubbles[:]:
+            bubble.move()
+            if bubble.is_offscreen():
+                bubbles.remove(bubble)
+            else:
+                sprite = bubble.get_sprite()
+                by = int(bubble.y)
+                bx = int(bubble.x - len(sprite[0]) / 2)
+                for i, row in enumerate(sprite):
+                    for j, char in enumerate(row):
+                        if char != ' ':
+                            gy = by - i + 1
+                            gx = bx + j + 1
+                            if 0 < gy < N+1 and 0 < gx < M+1:
+                                stdscr.addch(gy, gx, char, curses.color_pair(COLOR_BUBBLE))
+
+        # Update and draw fish
+        for fish in fish_list:
+            fish.move()
+            fish.handle_walls()
+            sprite = fish.get_sprite()
+            fy = int(fish.y) - len(sprite) // 2
+            fx = int(fish.x) - len(sprite[0]) // 2
+            for i, row in enumerate(sprite):
+                for j, char in enumerate(row):
+                    if char != ' ':
+                        gy = fy + i + 1
+                        gx = fx + j + 1
+                        if 0 < gy < N+1 and 0 < gx < M+1:
+                            stdscr.addch(gy, gx, char, curses.color_pair(COLOR_FISH))
+
+        # Fish-fish collisions
+        for i in range(len(fish_list)):
+            for j in range(i+1, len(fish_list)):
+                f1, f2 = fish_list[i], fish_list[j]
+                dist = math.hypot(f1.x - f2.x, f1.y - f2.y)
+                if dist < (f1.size + f2.size) / 2 + 1:
+                    f1.reflect()
+                    f2.reflect()
+
+        # Add new bubbles
+        if random.random() < BUBBLE_FREQ:
+            bubbles.append(Bubble(random.uniform(2, M-3), N))
+
+        stdscr.refresh()
+        time.sleep(0.1)
+
+        if stdscr.getch() == ord('q'):
+            break
+
+if __name__ == "__main__":
+    curses.wrapper(main)
