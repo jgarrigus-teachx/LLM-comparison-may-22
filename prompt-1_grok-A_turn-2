@@ -1,0 +1,148 @@
+import math
+import time
+import random
+import os
+
+# Customizable parameters
+N = 20  # Height (rows)
+M = 40  # Width (columns)
+Q = 5   # Number of fish
+FISH_SPEED = 1.5  # Units per frame
+BUBBLE_SPEED = 1.0  # Units per frame
+BUBBLE_FREQ = 0.3  # Probability of new bubble per frame
+
+# ANSI Colors
+COLOR_RESET = "\033[0m"
+COLOR_WATER = "\033[44m"  # Blue background for water
+COLOR_BUBBLE = "\033[96m"  # Light cyan for bubbles
+COLOR_FISH = "\033[93m"  # Yellow for fish
+COLOR_BORDER = "\033[97m"  # White for borders
+
+class Fish:
+    def __init__(self, x, y):
+        self.x = x  # Center x
+        self.y = y  # Center y
+        self.angle = random.uniform(0, 2 * math.pi)
+        self.speed = FISH_SPEED
+        self.size = random.randint(1, 3)  # Width in characters
+
+    def move(self):
+        self.x += self.speed * math.cos(self.angle)
+        self.y += self.speed * math.sin(self.angle)
+
+    def reflect(self, is_wall=False):
+        if is_wall:
+            self.angle = math.pi - self.angle + random.uniform(-0.2, 0.2)
+        else:
+            self.angle = -self.angle + random.uniform(-0.2, 0.2)
+        self.angle %= (2 * math.pi)
+
+    def get_sprite(self):
+        # Multi-character sprites based on direction and size
+        if -math.pi/4 < self.angle <= math.pi/4:  # Right
+            return ['>' * self.size]
+        elif math.pi/4 < self.angle <= 3*math.pi/4:  # Up
+            return ['^' * self.size]
+        elif 3*math.pi/4 < self.angle <= 5*math.pi/4:  # Left
+            return ['<' * self.size]
+        else:  # Down
+            return ['v' * self.size]
+        # For simplicity, keeping as single row; could expand to multi-row if desired
+
+class Bubble:
+    def __init__(self, x):
+        self.x = x  # Center x
+        self.y = N - 1  # Start at bottom
+        self.width = random.randint(1, 3)
+        self.height = self.width  # Roughly square/circular
+        self.speed = BUBBLE_SPEED
+
+    def move(self):
+        self.y -= self.speed
+
+    def is_offscreen(self):
+        return self.y + self.height < 0
+
+    def get_sprite(self):
+        # Simple circular-ish pattern (list of strings for each row)
+        if self.width == 1:
+            return ['o']
+        elif self.width == 2:
+            return ['oo']
+        else:  # width 3
+            return [' o ', 'ooo', ' o '][:self.height]  # Trim to height
+
+# Initialize
+fish_list = [Fish(random.uniform(2, M-3), random.uniform(2, N-3)) for _ in range(Q)]
+bubbles = []
+
+def clear_screen():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+def draw_grid():
+    grid = [[COLOR_WATER + ' ' + COLOR_RESET for _ in range(M)] for _ in range(N)]
+    
+    # Draw bubbles
+    for bubble in bubbles:
+        sprite = bubble.get_sprite()
+        by = int(bubble.y)
+        bx = int(bubble.x - bubble.width / 2)
+        for i, row in enumerate(sprite):
+            for j, char in enumerate(row):
+                gy = by - i  # Bubbles rise, so invert i for shape
+                gx = bx + j
+                if 0 <= gy < N and 0 <= gx < M and char != ' ':
+                    grid[gy][gx] = COLOR_BUBBLE + 'o' + COLOR_RESET
+    
+    # Draw fish (overlay)
+    for fish in fish_list:
+        sprite = fish.get_sprite()
+        fy = int(fish.y)
+        fx = int(fish.x - fish.size / 2)
+        for i, row in enumerate(sprite):
+            for j, char in enumerate(row):
+                gy = fy + i
+                gx = fx + j
+                if 0 <= gy < N and 0 <= gx < M:
+                    grid[gy][gx] = COLOR_FISH + char + COLOR_RESET
+    
+    # Print grid with borders
+    print(COLOR_BORDER + '+' + '-' * M + '+' + COLOR_RESET)
+    for row in grid:
+        print(COLOR_BORDER + '|' + COLOR_RESET + ''.join(row) + COLOR_BORDER + '|' + COLOR_RESET)
+    print(COLOR_BORDER + '+' + '-' * M + '+' + COLOR_RESET)
+
+while True:
+    clear_screen()
+    
+    # Update fish
+    for fish in fish_list:
+        fish.move()
+        half_size = fish.size / 2
+        if fish.x - half_size < 0 or fish.x + half_size >= M:
+            fish.x = max(half_size, min(M - half_size - 1, fish.x))
+            fish.reflect(is_wall=True)
+        if fish.y < 0 or fish.y >= N:
+            fish.y = max(0, min(N-1, fish.y))
+            fish.reflect(is_wall=True)
+    
+    # Fish-fish collisions (check center distance relative to sizes)
+    for i in range(len(fish_list)):
+        for j in range(i+1, len(fish_list)):
+            f1, f2 = fish_list[i], fish_list[j]
+            dist = math.hypot(f1.x - f2.x, f1.y - f2.y)
+            if dist < (f1.size + f2.size) / 2 + 0.5:
+                f1.reflect()
+                f2.reflect()
+    
+    # Update bubbles
+    for bubble in bubbles:
+        bubble.move()
+    bubbles = [b for b in bubbles if not b.is_offscreen()]
+    
+    # Add new bubbles
+    if random.random() < BUBBLE_FREQ:
+        bubbles.append(Bubble(random.uniform(2, M-3)))
+    
+    draw_grid()
+    time.sleep(0.1)
