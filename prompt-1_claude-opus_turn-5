@@ -1,0 +1,408 @@
+import random
+import time
+import os
+import math
+import sys
+
+# Configuration Constants
+TANK_WIDTH = 80
+TANK_HEIGHT = 30
+NUM_FISH = 8
+FISH_SPEED = 0.7
+BUBBLE_CHANCE = 0.15  # Probability of bubble spawn per frame
+BUBBLE_SPEED = 0.3
+CORAL_DENSITY = 0.7  # Probability of coral placement
+FPS = 10
+
+# ANSI color codes for a nice aquarium feel
+BLUE = '\033[94m'
+CYAN = '\033[96m'
+YELLOW = '\033[93m'
+GREEN = '\033[92m'
+MAGENTA = '\033[95m'
+RED = '\033[91m'
+WHITE = '\033[97m'
+BRIGHT_GREEN = '\033[92;1m'
+BRIGHT_MAGENTA = '\033[95;1m'
+BRIGHT_CYAN = '\033[96;1m'
+BRIGHT_RED = '\033[91;1m'
+RESET = '\033[0m'
+CLEAR = '\033[2J\033[H'
+
+class Fish:
+    def __init__(self, x, y, dx, dy, color):
+        self.x = x
+        self.y = y
+        self.dx = dx  # velocity in x direction
+        self.dy = dy  # velocity in y direction
+        self.color = color
+        self.size = random.randint(1, 3)  # Fish size 1-3
+        self.last_bounce_time = 0
+        self.bounce_count = 0
+        self.update_appearance()
+    
+    def update_appearance(self):
+        # Update fish appearance based on direction and size
+        angle = math.atan2(self.dy, self.dx)
+        
+        if -math.pi/4 <= angle <= math.pi/4:  # Right
+            if self.size == 1:
+                self.shape = [['>']
+                             ]
+            elif self.size == 2:
+                self.shape = [[' ', '>'],
+                              ['>', ')']
+                             ]
+            else:
+                self.shape = [[' ', '>', ')'],
+                              ['>', ')', ')'],
+                              [' ', '>', ')']
+                             ]
+                             
+        elif math.pi/4 < angle <= 3*math.pi/4:  # Down
+            if self.size == 1:
+                self.shape = [['v']
+                             ]
+            elif self.size == 2:
+                self.shape = [['\\', '/'],
+                              [' ', 'v']
+                             ]
+            else:
+                self.shape = [['\\', ' ', '/'],
+                              [' ', 'v', ' '],
+                              [' ', '|', ' ']
+                             ]
+                             
+        elif -3*math.pi/4 <= angle < -math.pi/4:  # Up
+            if self.size == 1:
+                self.shape = [['^']
+                             ]
+            elif self.size == 2:
+                self.shape = [[' ', '^'],
+                              ['/', '\\']
+                             ]
+            else:
+                self.shape = [[' ', '|', ' '],
+                              [' ', '^', ' '],
+                              ['/', ' ', '\\']
+                             ]
+        else:  # Left
+            if self.size == 1:
+                self.shape = [['<']
+                             ]
+            elif self.size == 2:
+                self.shape = [['<', ' '],
+                              ['(', '<']
+                             ]
+            else:
+                self.shape = [['(', '<', ' '],
+                              ['(', '(', '<'],
+                              ['(', '<', ' ']
+                             ]
+    
+    def get_width(self):
+        return len(self.shape[0]) if self.shape else 0
+    
+    def get_height(self):
+        return len(self.shape)
+    
+    def move(self, width, height, other_fish):
+        # Store old position
+        old_x, old_y = self.x, self.y
+        
+        # Update position
+        self.x += self.dx
+        self.y += self.dy
+        
+        # Check if we're bouncing too much (anti-jitter)
+        current_time = time.time()
+        if current_time - self.last_bounce_time > 1.0:
+            self.bounce_count = 0
+        
+        # If stuck (too many bounces), change direction randomly
+        if self.bounce_count >= 2:
+            angle = random.uniform(0, 2 * math.pi)
+            self.dx = FISH_SPEED * math.cos(angle)
+            self.dy = FISH_SPEED * math.sin(angle)
+            self.bounce_count = 0
+            self.update_appearance()
+            return
+        
+        # Check wall collisions
+        bounced = False
+        if self.x <= 0 or self.x >= width - self.get_width():
+            self.dx = -self.dx + random.uniform(-0.2, 0.2)
+            self.x = max(1, min(width - self.get_width() - 1, self.x))
+            bounced = True
+        
+        if self.y <= 0 or self.y >= height - self.get_height():
+            self.dy = -self.dy + random.uniform(-0.2, 0.2)
+            self.y = max(1, min(height - self.get_height() - 1, self.y))
+            bounced = True
+        
+        # Check fish collisions
+        for other in other_fish:
+            if other != self:
+                dist = math.sqrt((self.x - other.x)**2 + (self.y - other.y)**2)
+                if dist < (self.size + other.size) * 0.8:  # Collision threshold based on size
+                    # Reflect and add randomization
+                    self.dx = -self.dx + random.uniform(-0.3, 0.3)
+                    self.dy = -self.dy + random.uniform(-0.3, 0.3)
+                    # Move back to old position
+                    self.x, self.y = old_x, old_y
+                    bounced = True
+        
+        # Track bounces
+        if bounced:
+            self.bounce_count += 1
+            self.last_bounce_time = current_time
+        
+        # Normalize speed to keep it constant
+        speed = math.sqrt(self.dx**2 + self.dy**2)
+        if speed > 0:
+            self.dx = (self.dx / speed) * FISH_SPEED
+            self.dy = (self.dy / speed) * FISH_SPEED
+        
+        self.update_appearance()
+
+class Bubble:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.size = random.randint(1, 3)  # Bubble size 1-3
+        
+        if self.size == 1:
+            self.shape = [['o']]
+        elif self.size == 2:
+            self.shape = [['o', 'O'],
+                          ['O', 'o']]
+        else:
+            self.shape = [[' ', 'o', ' '],
+                          ['o', 'O', 'o'],
+                          [' ', 'o', ' ']]
+    
+    def get_width(self):
+        return len(self.shape[0]) if self.shape else 0
+    
+    def get_height(self):
+        return len(self.shape)
+    
+    def move(self):
+        self.y -= BUBBLE_SPEED  # Upward movement
+        # Slight horizontal drift
+        self.x += random.uniform(-0.1, 0.1)
+
+class Fishtank:
+    def __init__(self, width=TANK_WIDTH, height=TANK_HEIGHT, num_fish=NUM_FISH):
+        self.width = width
+        self.height = height
+        self.fish = []
+        self.bubbles = []
+        self.frame = 0
+        self.coral = self.generate_coral()
+        
+        # Create fish with random positions and velocities
+        fish_colors = [YELLOW, GREEN, MAGENTA, RED, CYAN, BRIGHT_CYAN]
+        for i in range(num_fish):
+            x = random.uniform(5, width - 10)
+            y = random.uniform(5, height - 5)
+            angle = random.uniform(0, 2 * math.pi)
+            dx = FISH_SPEED * math.cos(angle)
+            dy = FISH_SPEED * math.sin(angle)
+            color = fish_colors[i % len(fish_colors)]
+            self.fish.append(Fish(x, y, dx, dy, color))
+    
+    def generate_coral(self):
+        coral = []
+        coral_types = [
+            # Branching coral
+            {
+                'pattern': [
+                    ['/', '|', '\\'],
+                    ['/', '|', '|', '\\'],
+                    ['|', '/', '\\', '|']
+                ],
+                'colors': [BRIGHT_GREEN, GREEN, BRIGHT_GREEN, GREEN]
+            },
+            # Fan coral
+            {
+                'pattern': [
+                    ['(', '(', ')', ')'],
+                    ['(', '(', '(', ')', ')', ')'],
+                    ['\\', '(', '(', ')', '/']
+                ],
+                'colors': [BRIGHT_MAGENTA, MAGENTA, BRIGHT_MAGENTA]
+            },
+            # Anemone
+            {
+                'pattern': [
+                    ['*', '~', '*', '~', '*'],
+                    ['~', '*', '~', '*', '~'],
+                    ['\\', '*', '|', '*', '/']
+                ],
+                'colors': [BRIGHT_RED, RED, BRIGHT_RED]
+            },
+            # Kelp/Seaweed
+            {
+                'pattern': [
+                    [')', '('],
+                    ['(', ')'],
+                    [')', '('],
+                    ['(', ')']
+                ],
+                'colors': [GREEN, BRIGHT_GREEN]
+            },
+            # Brain coral
+            {
+                'pattern': [
+                    ['@', '@', '@'],
+                    ['@', '@', '@', '@'],
+                    ['@', '@', '@']
+                ],
+                'colors': [CYAN, BRIGHT_CYAN]
+            },
+            # Staghorn coral
+            {
+                'pattern': [
+                    ['Y', ' ', 'Y'],
+                    [' ', 'Y', 'Y', ' '],
+                    ['Y', 'Y', 'Y', 'Y']
+                ],
+                'colors': [YELLOW, BRIGHT_GREEN]
+            }
+        ]
+        
+        # Place coral clusters along the bottom
+        x = 3
+        while x < self.width - 5:
+            if random.random() < CORAL_DENSITY:
+                coral_type = random.choice(coral_types)
+                height = min(len(coral_type['pattern']), random.randint(2, 5))
+                coral.append({
+                    'x': x,
+                    'pattern': coral_type['pattern'][:height],
+                    'colors': coral_type['colors']
+                })
+            x += random.randint(3, 7)
+        
+        return coral
+    
+    def add_bubble(self):
+        # Randomly add bubbles
+        if random.random() < BUBBLE_CHANCE:
+            x = random.uniform(3, self.width - 5)
+            # Sometimes bubbles come from coral
+            if random.random() < 0.3 and self.coral:
+                coral = random.choice(self.coral)
+                x = coral['x'] + random.randint(0, 3)
+                y = self.height - len(coral['pattern']) - 2
+            else:
+                y = self.height - 2
+            self.bubbles.append(Bubble(x, y))
+    
+    def update(self):
+        # Move fish
+        for fish in self.fish:
+            fish.move(self.width, self.height, self.fish)
+        
+        # Move bubbles and remove off-screen ones
+        self.bubbles = [b for b in self.bubbles if b.y > -b.get_height()]
+        for bubble in self.bubbles:
+            bubble.move()
+        
+        # Add new bubbles
+        self.add_bubble()
+        
+        self.frame += 1
+    
+    def render(self):
+        # Create empty tank
+        tank = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Draw borders
+        for x in range(self.width):
+            tank[0][x] = '─'
+            tank[self.height-1][x] = '─'
+        for y in range(self.height):
+            tank[y][0] = '│'
+            tank[y][self.width-1] = '│'
+        
+        # Corners
+        tank[0][0] = '┌'
+        tank[0][self.width-1] = '┐'
+        tank[self.height-1][0] = '└'
+        tank[self.height-1][self.width-1] = '┘'
+        
+        # Draw sand/bottom
+        for x in range(1, self.width - 1):
+            tank[self.height - 2][x] = YELLOW + '·' + RESET
+        
+        # Draw coral in background (before bubbles and fish)
+        for coral in self.coral:
+            x = coral['x']
+            for h, pattern_row in enumerate(coral['pattern']):
+                y = self.height - 2 - len(coral['pattern']) + h
+                color = coral['colors'][h % len(coral['colors'])]
+                for i, char in enumerate(pattern_row):
+                    if char != ' ' and x + i < self.width - 1 and y > 0:
+                        tank[y][x + i] = color + char + RESET
+        
+        # Draw bubbles
+        for bubble in self.bubbles:
+            x, y = int(bubble.x), int(bubble.y)
+            for dy, row in enumerate(bubble.shape):
+                for dx, char in enumerate(row):
+                    if char != ' ':
+                        px, py = x + dx, y + dy
+                        if 0 < px < self.width - 1 and 0 < py < self.height - 1:
+                            tank[py][px] = CYAN + char + RESET
+        
+        # Draw fish (on top)
+        for fish in self.fish:
+            x, y = int(fish.x), int(fish.y)
+            for dy, row in enumerate(fish.shape):
+                for dx, char in enumerate(row):
+                    if char != ' ':
+                        px, py = x + dx, y + dy
+                        if 0 < px < self.width - 1 and 0 < py < self.height - 1:
+                            tank[py][px] = fish.color + char + RESET
+        
+        # Convert to string
+        output = CLEAR
+        for row in tank:
+            output += ''.join(row) + '\n'
+        
+        return output
+
+def main():
+    # Set up terminal
+    if os.name == 'nt':  # Windows
+        os.system('cls')
+    else:  # Unix/Linux/Mac
+        os.system('clear')
+    
+    print("🐠 ASCII Fishtank Simulation 🐠")
+    print("Press Ctrl+C to exit\n")
+    time.sleep(2)
+    
+    # Create fishtank
+    tank = Fishtank()
+    
+    try:
+        while True:
+            # Update simulation
+            tank.update()
+            
+            # Render and display
+            print(tank.render(), end='')
+            
+            # Control frame rate
+            time.sleep(1.0 / FPS)
+            
+    except KeyboardInterrupt:
+        # Clean exit
+        print("\n\nThanks for watching the fish! 🐠")
+        sys.exit(0)
+
+if __name__ == "__main__":
+    main()
